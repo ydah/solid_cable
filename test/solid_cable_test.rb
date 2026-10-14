@@ -51,6 +51,22 @@ class SolidCableTest < ActiveSupport::TestCase
     assert_equal [ 0 ], SolidCable.reconnect_attempts
   end
 
+  test "polling_lookback defaults to one second" do
+    assert_equal 1.second, SolidCable.polling_lookback
+  end
+
+  test "polling_lookback accepts a duration" do
+    with_cable_config polling_lookback: "0.5.seconds" do
+      assert_equal 0.5.seconds, SolidCable.polling_lookback
+    end
+  end
+
+  test "polling_lookback cannot be negative" do
+    with_cable_config polling_lookback: "-1.second" do
+      assert_equal 0, SolidCable.polling_lookback
+    end
+  end
+
   test "reconnect_attempts accepts an integer" do
     with_cable_config reconnect_attempts: 3 do
       assert_equal [ 0, 0, 0 ], SolidCable.reconnect_attempts

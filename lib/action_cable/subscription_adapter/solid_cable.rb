@@ -4,6 +4,7 @@ require "action_cable/subscription_adapter/base"
 require "action_cable/subscription_adapter/channel_prefix"
 require "action_cable/subscription_adapter/subscriber_map"
 require "concurrent/atomic/semaphore"
+require "set"
 
 module ActionCable
   module SubscriptionAdapter
@@ -84,6 +85,8 @@ module ActionCable
 
             @reconnect_attempt = 0
             @last_id = last_message_id
+            @polling_cursors = []
+            @delivered_ids = Set.new
 
             @thread = Thread.new do
               Thread.current.name = "solid_cable_listener"
@@ -155,21 +158,34 @@ module ActionCable
             end
 
             def broadcast_messages
+              last_seen_id = last_id
               ::SolidCable::Message.
                 broadcastable(channels.keys, last_id).each do |message|
-                  should_broadcast_message = false
-                  channels.compute_if_present(message.channel_hash) do |channel_last_id|
-                    break if channel_last_id >= message.id
+                  last_seen_id = message.id
+                  next if @delivered_ids.include?(message.id)
 
-                    should_broadcast_message = true
-                    message.id
+                  subscribed_at_id = channels[message.channel_hash]
+                  if subscribed_at_id && message.id > subscribed_at_id
+                    broadcast(message)
+                    @delivered_ids.add(message.id)
                   end
-
-                  broadcast(message) if should_broadcast_message
-                  self.last_id = message.id
                 end
 
+              advance_last_id(last_seen_id)
               self.reconnect_attempt = 0
+            end
+
+            def advance_last_id(last_seen_id)
+              now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+              if last_seen_id > (@polling_cursors.last&.last || last_id)
+                @polling_cursors << [ now, last_seen_id ]
+              end
+
+              # shortcut: Longer commit delays can be missed; increase polling_lookback for longer transactions.
+              while @polling_cursors.first && @polling_cursors.first.first <= now - ::SolidCable.polling_lookback
+                self.last_id = @polling_cursors.shift.last
+              end
+              @delivered_ids.delete_if { |id| id <= last_id }
             end
 
             def broadcast(message)

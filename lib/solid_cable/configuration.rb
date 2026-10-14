@@ -4,7 +4,7 @@ module SolidCable
       @options = ActiveSupport::InheritableOptions.new(options)
     end
 
-    attr_writer :connects_to, :silence_polling, :polling_interval,
+    attr_writer :connects_to, :silence_polling, :polling_interval, :polling_lookback,
       :message_retention, :autotrim, :trim_batch_size, :use_skip_locked,
       :reconnect_attempts, :writer_batch_size, :writer_batch_delay,
       :encrypt, :encryption_context_properties
@@ -22,6 +22,11 @@ module SolidCable
     def polling_interval
       @polling_interval ||=
         parse_duration(options.polling_interval, default: 0.1.seconds)
+    end
+
+    def polling_lookback
+      @polling_lookback ||=
+        [ parse_duration(options.polling_lookback, default: 1.second), 0 ].max
     end
 
     def message_retention

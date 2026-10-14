@@ -81,6 +81,14 @@ The options are:
 - `connects_to` - set the Active Record database configuration for the Solid Cable models. All options available in Active Record can be used here.
 - `polling_interval` - sets the frequency of the polling interval. (Defaults to
   0.1.seconds)
+- `polling_lookback` - keeps the polling cursor behind newly observed message IDs
+  so concurrent inserts that commit out of ID order can still be delivered.
+  Messages reread during this window are delivered only once. (Defaults to
+  1.second; use 0.seconds to disable.) A lower ID must become visible within this
+  window after a higher ID is observed, and before the message is trimmed.
+  Longer delays can still cause message loss. Increase this value for longer
+  transactions, at the cost of more repeated reads and per-listener memory.
+  Messages at or below the ID recorded when subscribing are still excluded.
 - `message_retention` - sets the retention time for messages kept in the database. Used as the cut-off when trimming is performed. (Defaults to 1.day) Messages only need to outlive the slowest subscriber's polling interval, plus some margin for a listener that is reconnecting, so a few minutes is plenty for most apps. The default is generous: an app broadcasting 60 messages per second keeps about 5 million rows (≈3.5 GB on SQLite) with `1.day`, and about 18,000 rows with `5.minutes`.
 - `autotrim` - sets wether you want Solid Cable to handle autotrimming messages. (Defaults to true)
 - `silence_polling` - whether to silence Active Record logs emitted when polling (Defaults to true)

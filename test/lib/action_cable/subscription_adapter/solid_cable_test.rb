@@ -116,6 +116,66 @@ class ActionCable::SubscriptionAdapter::SolidCableTest < ActionCable::TestCase
     end
   end
 
+  test "delivers messages committed out of id order" do
+    skip "SQLite serializes concurrent writers" if SolidCable::Message.connection.adapter_name == "SQLite"
+
+    subscribe_as_queue("commit-order") do |queue|
+      SolidCable::Message.transaction do
+        SolidCable::Message.broadcast("commit-order", "first insert")
+        @tx_adapter.broadcast("commit-order", "second insert")
+
+        assert_equal "second insert", next_message_in_queue(queue)
+        assert_equal ["first insert", "second insert"],
+          SolidCable::Message.where(channel: "commit-order").order(:id).pluck(:payload)
+      end
+
+      assert_equal "first insert", next_message_in_queue(queue)
+    end
+  ensure
+    SolidCable::Message.where(channel: "commit-order").delete_all
+  end
+  uses_transaction :test_delivers_messages_committed_out_of_id_order
+
+  test "looks back without redelivery and expires polling state" do
+    with_cable_config polling_lookback: "1.second" do
+      listener = ActionCable::SubscriptionAdapter::SolidCable::Listener.new(@rx_adapter, Concurrent::ImmediateExecutor.new)
+      listener.shutdown
+      received = []
+      listener.add_subscriber("lookback", ->(payload) { received << payload }, nil)
+
+      initial_id = SolidCable::Message.maximum(:id) || 0
+      attributes = { channel: "lookback", channel_hash: SolidCable::Message.channel_hash_for("lookback"), created_at: Time.current }
+      now = 0.0
+      Process.stub(:clock_gettime, ->(*) { now }) do
+        SolidCable::Message.insert(attributes.merge(id: initial_id + 3, payload: "early commit"))
+        listener.send(:broadcast_messages)
+        assert_equal ["early commit"], received
+        assert_equal initial_id, listener.send(:last_id)
+
+        now = 0.5
+        SolidCable::Message.insert(attributes.merge(id: initial_id + 1, payload: "late commit"))
+        SolidCable::Message.insert(attributes.merge(id: initial_id + 4, payload: "new message"))
+        listener.send(:broadcast_messages)
+        assert_equal ["early commit", "late commit", "new message"], received
+
+        now = 1.1
+        listener.send(:broadcast_messages)
+        assert_equal initial_id + 3, listener.send(:last_id)
+        assert_equal [initial_id + 4], listener.instance_variable_get(:@delivered_ids).to_a
+
+        now = 1.6
+        listener.send(:broadcast_messages)
+        assert_equal initial_id + 4, listener.send(:last_id)
+        assert_empty listener.instance_variable_get(:@delivered_ids)
+        assert_empty listener.instance_variable_get(:@polling_cursors)
+
+        SolidCable::Message.insert(attributes.merge(id: initial_id + 2, payload: "outside lookback"))
+        listener.send(:broadcast_messages)
+        assert_equal ["early commit", "late commit", "new message"], received
+      end
+    end
+  end
+
   test "identical_subscriptions" do
     subscribe_as_queue("channel") do |queue|
       subscribe_as_queue("channel") do |queue_2|

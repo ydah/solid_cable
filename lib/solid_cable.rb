@@ -9,7 +9,7 @@ require "action_cable/subscription_adapter/solid_cable"
 
 module SolidCable
   class << self
-    delegate :connects_to, :silence_polling?, :polling_interval,
+    delegate :connects_to, :silence_polling?, :polling_interval, :polling_lookback,
       :message_retention, :autotrim?, :trim_batch_size, :use_skip_locked,
       :reconnect_attempts, :writer_batch_size, :writer_batch_delay,
       :encrypt?, :encryption_context_properties,
